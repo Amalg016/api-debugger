@@ -89,3 +89,19 @@ pub struct PaginationMeta {
     pub total: i64,
     pub total_pages: i64,
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Replay
+// ─────────────────────────────────────────────────────────────────────
+
+/// Response returned by `POST /requests/{id}/replay`.
+#[derive(Debug, Serialize)]
+pub struct ReplayResponse {
+    /// The original stored response.
+    pub original_response: Option<ResponseLog>,
+    /// The freshly replayed response.
+    pub replayed_response: ResponseLog,
+    /// Structured diff between original and replayed response bodies (if both are JSON).
+    pub diff: Option<crate::diff::DiffResult>,
+}
+

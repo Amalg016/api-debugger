@@ -1,8 +1,10 @@
-use actix_web::{get, web, HttpResponse, Responder};
+use actix_web::{get, post, web, HttpResponse, Responder};
 use sqlx::SqlitePool;
 
+use crate::diff;
 use crate::models::{
-    PaginatedResponse, PaginationMeta, RequestDetail, RequestLog, RequestQuery, ResponseLog,
+    PaginatedResponse, PaginationMeta, ReplayResponse, RequestDetail, RequestLog, RequestQuery,
+    ResponseLog,
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -142,6 +144,159 @@ pub async fn get_request(
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// POST /requests/{id}/replay — re-execute a stored request
+// ─────────────────────────────────────────────────────────────────────
+
+/// Replay a previously captured request.
+///
+/// 1. Fetches the stored request (method, path, headers, body).
+/// 2. Reconstructs the HTTP call using `reqwest`.
+/// 3. Sends it to the same path on a configurable target host
+///    (defaults to `http://127.0.0.1:8080`).
+/// 4. Stores the new response in the DB.
+/// 5. Diffs the original vs replayed response bodies (if JSON).
+#[post("/requests/{id}/replay")]
+pub async fn replay_request(
+    pool: web::Data<SqlitePool>,
+    id: web::Path<i64>,
+) -> impl Responder {
+    let request_id = id.into_inner();
+
+    // ── 1. Load the stored request ───────────────────────────────────
+    let stored_req = sqlx::query_as::<_, RequestLog>(
+        "SELECT id, method, path, headers, body, created_at FROM requests WHERE id = ?",
+    )
+    .bind(request_id)
+    .fetch_optional(pool.get_ref())
+    .await;
+
+    let stored_req = match stored_req {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return HttpResponse::NotFound().json(serde_json::json!({
+                "error": format!("Request {request_id} not found")
+            }));
+        }
+        Err(e) => return HttpResponse::InternalServerError().json(ErrorBody::new(e)),
+    };
+
+    // Load original response for diffing
+    let original_response = sqlx::query_as::<_, ResponseLog>(
+        "SELECT id, request_id, status, body, created_at FROM responses WHERE request_id = ?",
+    )
+    .bind(request_id)
+    .fetch_optional(pool.get_ref())
+    .await
+    .unwrap_or(None);
+
+    // ── 2. Reconstruct the HTTP request ──────────────────────────────
+    let target_base = "http://127.0.0.1:8080";
+    let url = format!("{}{}", target_base, stored_req.path);
+
+    let client = reqwest::Client::new();
+    let method: reqwest::Method = stored_req
+        .method
+        .parse()
+        .unwrap_or(reqwest::Method::GET);
+
+    let mut req_builder = client.request(method, &url);
+
+    // Restore original headers (skip host / content-length, reqwest sets those)
+    if let Some(ref headers_json) = stored_req.headers {
+        if let Ok(headers_map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(headers_json) {
+            for (key, val) in &headers_map {
+                let k = key.to_lowercase();
+                if k == "host" || k == "content-length" || k == "transfer-encoding" {
+                    continue;
+                }
+                if let Some(v) = val.as_str() {
+                    req_builder = req_builder.header(key.as_str(), v);
+                }
+            }
+        }
+    }
+
+    // Attach body if present
+    if let Some(ref body) = stored_req.body {
+        req_builder = req_builder.body(body.clone());
+    }
+
+    // ── 3. Send it ───────────────────────────────────────────────────
+    let send_result = req_builder.send().await;
+
+    let (replay_status, replay_body) = match send_result {
+        Ok(resp) => {
+            let status = resp.status().as_u16() as i64;
+            let body = resp.text().await.unwrap_or_default();
+            (status, body)
+        }
+        Err(e) => {
+            return HttpResponse::BadGateway().json(serde_json::json!({
+                "error": format!("Replay failed: {e}")
+            }));
+        }
+    };
+
+    // ── 4. Store the replayed response ───────────────────────────────
+    // First insert a new request row to represent the replay
+    let new_req_id = match sqlx::query(
+        "INSERT INTO requests (method, path, headers, body) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&stored_req.method)
+    .bind(&stored_req.path)
+    .bind(&stored_req.headers)
+    .bind(&stored_req.body)
+    .execute(pool.get_ref())
+    .await
+    {
+        Ok(r) => r.last_insert_rowid(),
+        Err(e) => return HttpResponse::InternalServerError().json(ErrorBody::new(e)),
+    };
+
+    if let Err(e) = sqlx::query(
+        "INSERT INTO responses (request_id, status, body) VALUES (?, ?, ?)",
+    )
+    .bind(new_req_id)
+    .bind(replay_status)
+    .bind(&replay_body)
+    .execute(pool.get_ref())
+    .await
+    {
+        return HttpResponse::InternalServerError().json(ErrorBody::new(e));
+    }
+
+    // Build the replayed ResponseLog (use current time as approximation)
+    let replayed_response = ResponseLog {
+        id: new_req_id, // close enough for display
+        request_id: new_req_id,
+        status: replay_status,
+        body: Some(replay_body.clone()),
+        created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+    };
+
+    // ── 5. Diff old vs new response bodies ───────────────────────────
+    let diff_result = compute_diff(&original_response, &replay_body);
+
+    HttpResponse::Ok().json(ReplayResponse {
+        original_response,
+        replayed_response,
+        diff: diff_result,
+    })
+}
+
+/// Try to parse both bodies as JSON and diff them.
+/// Returns `None` if either body is missing or not valid JSON.
+fn compute_diff(
+    original: &Option<ResponseLog>,
+    new_body: &str,
+) -> Option<diff::DiffResult> {
+    let old_body = original.as_ref()?.body.as_ref()?;
+    let old_json: serde_json::Value = serde_json::from_str(old_body).ok()?;
+    let new_json: serde_json::Value = serde_json::from_str(new_body).ok()?;
+    Some(diff::diff_json(&old_json, &new_json))
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // GET /responses — kept for backwards compatibility
 // ─────────────────────────────────────────────────────────────────────
 
@@ -175,3 +330,4 @@ impl ErrorBody {
         }
     }
 }
+

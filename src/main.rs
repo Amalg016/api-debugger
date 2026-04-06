@@ -1,4 +1,5 @@
 mod db;
+mod diff;
 mod middleware;
 mod models;
 mod routes;
@@ -26,6 +27,7 @@ async fn main() -> std::io::Result<()> {
             .service(routes::health)
             .service(routes::list_requests)
             .service(routes::get_request)
+            .service(routes::replay_request)
             .service(routes::list_responses)
     })
     .bind("127.0.0.1:8080")?
