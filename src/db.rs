@@ -56,6 +56,7 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 }
 
 /// Insert a dummy request + response for testing.
+#[allow(dead_code)]
 pub async fn insert_dummy_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let req_id = sqlx::query(
         r#"

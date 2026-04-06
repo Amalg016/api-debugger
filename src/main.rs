@@ -1,7 +1,9 @@
 mod db;
+mod middleware;
 mod routes;
 
 use actix_web::{web, App, HttpServer};
+use middleware::RequestLogger;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -12,17 +14,14 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to initialise database");
 
-    // Insert some dummy data so we can verify the DB works
-    db::insert_dummy_data(&pool)
-        .await
-        .expect("Failed to insert dummy data");
-
     println!("🚀 Server starting at http://127.0.0.1:8080");
 
     // ── Start Actix server ───────────────────────────────────────────
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
+            // Logging middleware — captures every request/response
+            .wrap(RequestLogger)
             .service(routes::health)
             .service(routes::list_requests)
             .service(routes::list_responses)
