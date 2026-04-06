@@ -1,5 +1,6 @@
 mod db;
 mod middleware;
+mod models;
 mod routes;
 
 use actix_web::{web, App, HttpServer};
@@ -24,6 +25,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(RequestLogger)
             .service(routes::health)
             .service(routes::list_requests)
+            .service(routes::get_request)
             .service(routes::list_responses)
     })
     .bind("127.0.0.1:8080")?
