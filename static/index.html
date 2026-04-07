@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Debugger — Request Inspector</title>
+  <meta name="description" content="Real-time HTTP traffic inspector with replay and diff capabilities">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* ─── Reset & Tokens ──────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-primary:    #0a0e17;
+      --bg-secondary:  #111827;
+      --bg-card:       #1a2235;
+      --bg-hover:      #243049;
+      --bg-input:      #0d1321;
+      --border:        #2a3650;
+      --border-focus:  #6366f1;
+      --text-primary:  #f1f5f9;
+      --text-secondary:#94a3b8;
+      --text-muted:    #64748b;
+      --accent:        #818cf8;
+      --accent-dim:    #6366f1;
+      --green:         #34d399;
+      --green-dim:     rgba(52,211,153,.12);
+      --red:           #f87171;
+      --red-dim:       rgba(248,113,113,.12);
+      --yellow:        #fbbf24;
+      --yellow-dim:    rgba(251,191,36,.12);
+      --blue:          #60a5fa;
+      --blue-dim:      rgba(96,165,250,.12);
+      --purple:        #a78bfa;
+      --cyan:          #22d3ee;
+      --orange:        #fb923c;
+      --radius:        10px;
+      --radius-sm:     6px;
+      --shadow:        0 4px 24px rgba(0,0,0,.4);
+      --font-sans:     'Inter', -apple-system, sans-serif;
+      --font-mono:     'JetBrains Mono', 'Fira Code', monospace;
+      --transition:    .2s cubic-bezier(.4,0,.2,1);
+    }
+
+    html { font-size: 15px; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    /* ─── Layout ──────────────────────────────────────────────── */
+    .app-shell {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    header {
+      background: linear-gradient(135deg, #111827 0%, #1e293b 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      font-weight: 700;
+      font-size: 1.2rem;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .logo svg { width: 28px; height: 28px; }
+    .logo:hover { color: var(--text-primary); }
+
+    .header-actions {
+      margin-left: auto;
+      display: flex;
+      gap: .75rem;
+      align-items: center;
+    }
+
+    main {
+      flex: 1;
+      max-width: 1400px;
+      margin: 0 auto;
+      width: 100%;
+      padding: 1.5rem 2rem 3rem;
+    }
+
+    /* ─── Filters Bar ─────────────────────────────────────────── */
+    .filters {
+      display: flex;
+      gap: .75rem;
+      margin-bottom: 1.25rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .filter-input {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: .85rem;
+      padding: .55rem .9rem;
+      border-radius: var(--radius-sm);
+      outline: none;
+      transition: border var(--transition);
+      min-width: 160px;
+    }
+    .filter-input::placeholder { color: var(--text-muted); }
+    .filter-input:focus { border-color: var(--border-focus); }
+
+    .filter-select {
+      appearance: none;
+      background: var(--bg-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2364748b'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E") no-repeat right .7rem center;
+      background-size: 10px;
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: .85rem;
+      padding: .55rem 2rem .55rem .9rem;
+      border-radius: var(--radius-sm);
+      outline: none;
+      cursor: pointer;
+      transition: border var(--transition);
+    }
+    .filter-select:focus { border-color: var(--border-focus); }
+
+    /* ─── Buttons ──────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      font-family: var(--font-sans);
+      font-size: .85rem;
+      font-weight: 600;
+      padding: .55rem 1.1rem;
+      border-radius: var(--radius-sm);
+      border: none;
+      cursor: pointer;
+      transition: all var(--transition);
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-dim), #4f46e5);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #818cf8, #6366f1);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(99,102,241,.35);
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+    .btn-danger {
+      background: rgba(248,113,113,.15);
+      color: var(--red);
+      border: 1px solid rgba(248,113,113,.25);
+    }
+    .btn-danger:hover { background: rgba(248,113,113,.25); }
+
+    .btn-sm { padding: .35rem .7rem; font-size: .78rem; }
+
+    /* ─── Method badges ───────────────────────────────────────── */
+    .method {
+      display: inline-flex;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: .75rem;
+      font-weight: 600;
+      padding: .2rem .55rem;
+      border-radius: 4px;
+      letter-spacing: .03em;
+      min-width: 52px;
+      justify-content: center;
+    }
+    .method-GET    { background: var(--green-dim);  color: var(--green);  }
+    .method-POST   { background: var(--blue-dim);   color: var(--blue);   }
+    .method-PUT    { background: var(--yellow-dim); color: var(--yellow); }
+    .method-PATCH  { background: var(--yellow-dim); color: var(--orange); }
+    .method-DELETE { background: var(--red-dim);    color: var(--red);    }
+
+    /* ─── Status badges ───────────────────────────────────────── */
+    .status {
+      font-family: var(--font-mono);
+      font-size: .8rem;
+      font-weight: 600;
+      padding: .15rem .5rem;
+      border-radius: 4px;
+    }
+    .status-2xx { background: var(--green-dim); color: var(--green); }
+    .status-3xx { background: var(--blue-dim);  color: var(--blue);  }
+    .status-4xx { background: var(--yellow-dim);color: var(--yellow);}
+    .status-5xx { background: var(--red-dim);   color: var(--red);   }
+
+    /* ─── Timeline table ──────────────────────────────────────── */
+    .timeline-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    .timeline-table th {
+      text-align: left;
+      padding: .65rem 1rem;
+      font-size: .75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 60px;
+      background: var(--bg-primary);
+      z-index: 10;
+    }
+    .timeline-table td {
+      padding: .65rem 1rem;
+      border-bottom: 1px solid rgba(42,54,80,.4);
+      font-size: .88rem;
+      vertical-align: middle;
+    }
+    .timeline-table tbody tr {
+      cursor: pointer;
+      transition: background var(--transition);
+    }
+    .timeline-table tbody tr:hover { background: var(--bg-hover); }
+
+    .path-cell {
+      font-family: var(--font-mono);
+      font-size: .82rem;
+      color: var(--text-primary);
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .timestamp {
+      color: var(--text-muted);
+      font-size: .8rem;
+      font-family: var(--font-mono);
+      white-space: nowrap;
+    }
+    .id-cell {
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: .78rem;
+    }
+
+    /* ─── Pagination ──────────────────────────────────────────── */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 1rem;
+      padding: .75rem 0;
+      border-top: 1px solid var(--border);
+    }
+    .pagination-info { color: var(--text-muted); font-size: .82rem; }
+    .pagination-btns { display: flex; gap: .5rem; }
+
+    /* ─── Detail view ─────────────────────────────────────────── */
+    .detail-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .back-btn { cursor: pointer; }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+    }
+    @media (max-width: 900px) {
+      .detail-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .card-header {
+      padding: .75rem 1rem;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      font-size: .82rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    .card-body {
+      padding: 1rem;
+      max-height: 500px;
+      overflow: auto;
+    }
+
+    /* ─── JSON Viewer ─────────────────────────────────────────── */
+    .json-view {
+      font-family: var(--font-mono);
+      font-size: .8rem;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: var(--text-secondary);
+    }
+    .json-key    { color: var(--purple); }
+    .json-string { color: var(--green); }
+    .json-number { color: var(--cyan); }
+    .json-bool   { color: var(--orange); }
+    .json-null   { color: var(--text-muted); font-style: italic; }
+
+    /* ─── Meta info rows ──────────────────────────────────────── */
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: .75rem;
+      margin-bottom: 1.25rem;
+    }
+    .meta-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: .7rem 1rem;
+    }
+    .meta-label {
+      font-size: .7rem;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--text-muted);
+      margin-bottom: .25rem;
+    }
+    .meta-value {
+      font-family: var(--font-mono);
+      font-size: .88rem;
+      color: var(--text-primary);
+    }
+
+    /* ─── Diff viewer ─────────────────────────────────────────── */
+    .diff-section { margin-top: 1.5rem; }
+    .diff-title {
+      font-size: .9rem;
+      font-weight: 600;
+      margin-bottom: .75rem;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    .diff-badge {
+      font-size: .7rem;
+      padding: .15rem .45rem;
+      border-radius: 4px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+    .diff-badge-added   { background: var(--green-dim); color: var(--green); }
+    .diff-badge-removed { background: var(--red-dim);   color: var(--red);   }
+    .diff-badge-changed { background: var(--yellow-dim);color: var(--yellow);}
+    .diff-badge-identical { background: var(--green-dim);color: var(--green);}
+
+    .diff-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: .78rem;
+    }
+    .diff-table th {
+      text-align: left;
+      padding: .5rem .75rem;
+      font-size: .7rem;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-secondary);
+    }
+    .diff-table td {
+      padding: .45rem .75rem;
+      border-bottom: 1px solid rgba(42,54,80,.3);
+      vertical-align: top;
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .diff-path { color: var(--purple); }
+    .diff-old  { color: var(--red); }
+    .diff-new  { color: var(--green); }
+
+    /* ─── Empty state ─────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      color: var(--text-muted);
+    }
+    .empty-state svg { width: 64px; height: 64px; margin-bottom: 1rem; opacity: .3; }
+    .empty-state h3 { font-size: 1.1rem; color: var(--text-secondary); margin-bottom: .5rem; }
+
+    /* ─── Loading ──────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-overlay {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem;
+      gap: .75rem;
+      color: var(--text-muted);
+    }
+
+    /* ─── Toast ────────────────────────────────────────────────── */
+    .toast {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: .75rem 1.25rem;
+      font-size: .85rem;
+      color: var(--text-primary);
+      box-shadow: var(--shadow);
+      transform: translateY(120%);
+      transition: transform .3s ease;
+      z-index: 1000;
+      max-width: 400px;
+    }
+    .toast.show { transform: translateY(0); }
+    .toast-success { border-color: var(--green); }
+    .toast-error   { border-color: var(--red);   }
+
+    /* ─── Scrollbar ───────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* ─── Animations ──────────────────────────────────────────── */
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .fade-in { animation: fadeIn .3s ease; }
+
+    .view-hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- ─── Header ──────────────────────────────────────────── -->
+    <header>
+      <a class="logo" onclick="navigate('timeline')" href="#">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/>
+        </svg>
+        API Debugger
+      </a>
+      <div class="header-actions">
+        <button class="btn btn-ghost btn-sm" onclick="refreshData()" id="refreshBtn">
+          ↻ Refresh
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <!-- ═══ TIMELINE VIEW ═══════════════════════════════════ -->
+      <div id="view-timeline">
+        <div class="filters">
+          <select class="filter-select" id="filterMethod" onchange="applyFilters()">
+            <option value="">All Methods</option>
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+          <input class="filter-input" id="filterPath" placeholder="Filter by path…"
+                 oninput="debounceFilters()" />
+          <select class="filter-select" id="filterPerPage" onchange="applyFilters()">
+            <option value="20">20 per page</option>
+            <option value="50">50 per page</option>
+            <option value="100">100 per page</option>
+          </select>
+        </div>
+
+        <div id="timelineContent">
+          <div class="loading-overlay"><span class="spinner"></span> Loading requests…</div>
+        </div>
+      </div>
+
+      <!-- ═══ DETAIL VIEW ═════════════════════════════════════ -->
+      <div id="view-detail" class="view-hidden">
+        <div id="detailContent">
+          <div class="loading-overlay"><span class="spinner"></span> Loading…</div>
+        </div>
+      </div>
+
+      <!-- ═══ DIFF VIEW ══════════════════════════════════════= -->
+      <div id="view-diff" class="view-hidden">
+        <div id="diffContent">
+          <div class="loading-overlay"><span class="spinner"></span> Replaying…</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // ─── State ─────────────────────────────────────────────────
+    let currentPage = 1;
+    let debounceTimer = null;
+
+    // ─── Navigation ────────────────────────────────────────────
+    function navigate(view, id) {
+      document.getElementById('view-timeline').classList.toggle('view-hidden', view !== 'timeline');
+      document.getElementById('view-detail').classList.toggle('view-hidden', view !== 'detail');
+      document.getElementById('view-diff').classList.toggle('view-hidden', view !== 'diff');
+
+      if (view === 'timeline') {
+        location.hash = '';
+        loadTimeline();
+      } else if (view === 'detail') {
+        location.hash = `#/requests/${id}`;
+        loadDetail(id);
+      } else if (view === 'diff') {
+        location.hash = `#/requests/${id}/diff`;
+        loadDiff(id);
+      }
+    }
+
+    // ─── Hash routing ──────────────────────────────────────────
+    function handleHashChange() {
+      const hash = location.hash;
+      const diffMatch = hash.match(/^#\/requests\/(\d+)\/diff$/);
+      const detailMatch = hash.match(/^#\/requests\/(\d+)$/);
+
+      if (diffMatch) {
+        navigate('diff', parseInt(diffMatch[1]));
+      } else if (detailMatch) {
+        navigate('detail', parseInt(detailMatch[1]));
+      } else {
+        navigate('timeline');
+      }
+    }
+    window.addEventListener('hashchange', handleHashChange);
+
+    // ─── Timeline ──────────────────────────────────────────────
+    async function loadTimeline() {
+      const method = document.getElementById('filterMethod').value;
+      const path = document.getElementById('filterPath').value;
+      const perPage = document.getElementById('filterPerPage').value;
+
+      const params = new URLSearchParams();
+      if (method) params.set('method', method);
+      if (path) params.set('path', path);
+      params.set('page', currentPage);
+      params.set('per_page', perPage);
+
+      const container = document.getElementById('timelineContent');
+      try {
+        const res = await fetch(`/api/requests?${params}`);
+        const data = await res.json();
+
+        if (data.data.length === 0) {
+          container.innerHTML = `
+            <div class="empty-state fade-in">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+              </svg>
+              <h3>No requests found</h3>
+              <p>Make some API calls to <code>/health</code> and they'll appear here.</p>
+            </div>`;
+          return;
+        }
+
+        let html = `<table class="timeline-table fade-in">
+          <thead><tr>
+            <th>ID</th>
+            <th>Method</th>
+            <th>Path</th>
+            <th>Status</th>
+            <th>Timestamp</th>
+            <th>Actions</th>
+          </tr></thead><tbody>`;
+
+        for (const req of data.data) {
+          // Fetch response status for this request
+          const statusBadge = await getStatusBadge(req.id);
+          html += `<tr onclick="navigate('detail', ${req.id})">
+            <td class="id-cell">#${req.id}</td>
+            <td><span class="method method-${req.method}">${req.method}</span></td>
+            <td class="path-cell" title="${escapeHtml(req.path)}">${escapeHtml(req.path)}</td>
+            <td>${statusBadge}</td>
+            <td class="timestamp">${formatTime(req.created_at)}</td>
+            <td>
+              <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); navigate('diff', ${req.id})" title="Replay & Diff">
+                ⚡ Replay
+              </button>
+            </td>
+          </tr>`;
+        }
+
+        html += `</tbody></table>`;
+
+        // Pagination
+        const p = data.pagination;
+        html += `<div class="pagination">
+          <div class="pagination-info">
+            Showing page ${p.page} of ${p.total_pages} (${p.total} total)
+          </div>
+          <div class="pagination-btns">
+            <button class="btn btn-ghost btn-sm" ${p.page <= 1 ? 'disabled' : ''}
+                    onclick="currentPage=${p.page - 1}; loadTimeline()">← Prev</button>
+            <button class="btn btn-ghost btn-sm" ${p.page >= p.total_pages ? 'disabled' : ''}
+                    onclick="currentPage=${p.page + 1}; loadTimeline()">Next →</button>
+          </div>
+        </div>`;
+
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = `<div class="empty-state"><h3>Error loading requests</h3><p>${e.message}</p></div>`;
+      }
+    }
+
+    async function getStatusBadge(reqId) {
+      try {
+        const res = await fetch(`/api/requests/${reqId}`);
+        const data = await res.json();
+        if (data.response) {
+          const s = data.response.status;
+          const cls = s < 300 ? '2xx' : s < 400 ? '3xx' : s < 500 ? '4xx' : '5xx';
+          return `<span class="status status-${cls}">${s}</span>`;
+        }
+      } catch {}
+      return '<span class="status" style="color:var(--text-muted)">—</span>';
+    }
+
+    // ─── Detail View ───────────────────────────────────────────
+    async function loadDetail(id) {
+      const container = document.getElementById('detailContent');
+      container.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> Loading…</div>';
+
+      try {
+        const res = await fetch(`/api/requests/${id}`);
+        if (!res.ok) throw new Error(`Request ${id} not found`);
+        const data = await res.json();
+
+        const s = data.response?.status || 0;
+        const statusCls = s < 300 ? '2xx' : s < 400 ? '3xx' : s < 500 ? '4xx' : '5xx';
+
+        let html = `<div class="fade-in">
+          <div class="detail-header">
+            <button class="btn btn-ghost btn-sm back-btn" onclick="navigate('timeline')">← Back</button>
+            <span class="method method-${data.method}" style="font-size:.85rem">${data.method}</span>
+            <span style="font-family:var(--font-mono);font-size:.95rem">${escapeHtml(data.path)}</span>
+            ${s ? `<span class="status status-${statusCls}">${s}</span>` : ''}
+            <button class="btn btn-primary btn-sm" onclick="navigate('diff', ${id})" style="margin-left:auto">
+              ⚡ Replay & Diff
+            </button>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-item">
+              <div class="meta-label">Request ID</div>
+              <div class="meta-value">#${data.id}</div>
+            </div>
+            <div class="meta-item">
+              <div class="meta-label">Timestamp</div>
+              <div class="meta-value">${formatTime(data.created_at)}</div>
+            </div>
+            <div class="meta-item">
+              <div class="meta-label">Response Status</div>
+              <div class="meta-value">${s || 'N/A'}</div>
+            </div>
+            <div class="meta-item">
+              <div class="meta-label">Response Time</div>
+              <div class="meta-value">${data.response?.created_at ? formatTime(data.response.created_at) : 'N/A'}</div>
+            </div>
+          </div>
+
+          <div class="detail-grid">
+            <div class="card">
+              <div class="card-header">📤 Request Headers</div>
+              <div class="card-body">
+                <div class="json-view">${syntaxHighlight(tryParse(data.headers))}</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">📥 Response Body</div>
+              <div class="card-body">
+                <div class="json-view">${syntaxHighlight(tryParse(data.response?.body))}</div>
+              </div>
+            </div>
+          </div>
+
+          ${data.body ? `
+          <div style="margin-top:1.25rem">
+            <div class="card">
+              <div class="card-header">📤 Request Body</div>
+              <div class="card-body">
+                <div class="json-view">${syntaxHighlight(tryParse(data.body))}</div>
+              </div>
+            </div>
+          </div>` : ''}
+        </div>`;
+
+        container.innerHTML = html;
+      } catch (e) {
+        container.innerHTML = `<div class="empty-state fade-in"><h3>Error</h3><p>${e.message}</p></div>`;
+      }
+    }
+
+    // ─── Diff View (Replay) ────────────────────────────────────
+    async function loadDiff(id) {
+      const container = document.getElementById('diffContent');
+      container.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> Replaying request…</div>';
+
+      try {
+        const res = await fetch(`/api/requests/${id}/replay`, { method: 'POST' });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Replay failed');
+        }
+        const data = await res.json();
+
+        const origStatus = data.original_response?.status || 'N/A';
+        const newStatus = data.replayed_response.status;
+        const origCls = statusClass(origStatus);
+        const newCls = statusClass(newStatus);
+
+        let html = `<div class="fade-in">
+          <div class="detail-header">
+            <button class="btn btn-ghost btn-sm back-btn" onclick="navigate('detail', ${id})">← Back to Detail</button>
+            <span style="font-size:.95rem;font-weight:600;color:var(--accent)">⚡ Replay Results</span>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-item">
+              <div class="meta-label">Original Status</div>
+              <div class="meta-value"><span class="status status-${origCls}">${origStatus}</span></div>
+            </div>
+            <div class="meta-item">
+              <div class="meta-label">Replayed Status</div>
+              <div class="meta-value"><span class="status status-${newCls}">${newStatus}</span></div>
+            </div>
+            <div class="meta-item">
+              <div class="meta-label">Diff Status</div>
+              <div class="meta-value">${data.diff
+                ? (data.diff.identical
+                  ? '<span class="diff-badge diff-badge-identical">✓ Identical</span>'
+                  : `<span class="diff-badge diff-badge-changed">${data.diff.added.length + data.diff.removed.length + data.diff.changed.length} changes</span>`)
+                : '<span style="color:var(--text-muted)">Non-JSON body</span>'
+              }</div>
+            </div>
+          </div>
+
+          <div class="detail-grid">
+            <div class="card">
+              <div class="card-header">📦 Original Response</div>
+              <div class="card-body">
+                <div class="json-view">${syntaxHighlight(tryParse(data.original_response?.body))}</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">🔁 Replayed Response</div>
+              <div class="card-body">
+                <div class="json-view">${syntaxHighlight(tryParse(data.replayed_response.body))}</div>
+              </div>
+            </div>
+          </div>`;
+
+        // Diff details
+        if (data.diff && !data.diff.identical) {
+          html += `<div class="diff-section">`;
+
+          if (data.diff.added.length > 0) {
+            html += `
+              <div class="diff-title">
+                <span class="diff-badge diff-badge-added">+ Added</span>
+                ${data.diff.added.length} field${data.diff.added.length > 1 ? 's' : ''}
+              </div>
+              <div class="card" style="margin-bottom:1rem">
+                <div class="card-body" style="padding:0">
+                  <table class="diff-table"><thead><tr><th>Path</th><th>Value</th></tr></thead><tbody>
+                  ${data.diff.added.map(e => `<tr>
+                    <td class="diff-path">${escapeHtml(e.path)}</td>
+                    <td class="diff-new">${escapeHtml(JSON.stringify(e.value, null, 2).substring(0, 200))}</td>
+                  </tr>`).join('')}
+                  </tbody></table>
+                </div>
+              </div>`;
+          }
+
+          if (data.diff.removed.length > 0) {
+            html += `
+              <div class="diff-title">
+                <span class="diff-badge diff-badge-removed">− Removed</span>
+                ${data.diff.removed.length} field${data.diff.removed.length > 1 ? 's' : ''}
+              </div>
+              <div class="card" style="margin-bottom:1rem">
+                <div class="card-body" style="padding:0">
+                  <table class="diff-table"><thead><tr><th>Path</th><th>Value</th></tr></thead><tbody>
+                  ${data.diff.removed.map(e => `<tr>
+                    <td class="diff-path">${escapeHtml(e.path)}</td>
+                    <td class="diff-old">${escapeHtml(JSON.stringify(e.value, null, 2).substring(0, 200))}</td>
+                  </tr>`).join('')}
+                  </tbody></table>
+                </div>
+              </div>`;
+          }
+
+          if (data.diff.changed.length > 0) {
+            html += `
+              <div class="diff-title">
+                <span class="diff-badge diff-badge-changed">~ Changed</span>
+                ${data.diff.changed.length} field${data.diff.changed.length > 1 ? 's' : ''}
+              </div>
+              <div class="card" style="margin-bottom:1rem">
+                <div class="card-body" style="padding:0">
+                  <table class="diff-table"><thead><tr><th>Path</th><th>Old</th><th>New</th></tr></thead><tbody>
+                  ${data.diff.changed.map(e => `<tr>
+                    <td class="diff-path">${escapeHtml(e.path)}</td>
+                    <td class="diff-old">${escapeHtml(JSON.stringify(e.old_value))}</td>
+                    <td class="diff-new">${escapeHtml(JSON.stringify(e.new_value))}</td>
+                  </tr>`).join('')}
+                  </tbody></table>
+                </div>
+              </div>`;
+          }
+
+          html += `</div>`;
+        }
+
+        html += `</div>`;
+        container.innerHTML = html;
+        showToast('Replay completed successfully', 'success');
+      } catch (e) {
+        container.innerHTML = `<div class="empty-state fade-in"><h3>Replay Failed</h3><p>${e.message}</p></div>`;
+        showToast(e.message, 'error');
+      }
+    }
+
+    // ─── Helpers ───────────────────────────────────────────────
+    function tryParse(str) {
+      if (!str) return null;
+      try { return JSON.parse(str); } catch { return str; }
+    }
+
+    function syntaxHighlight(obj) {
+      if (obj === null || obj === undefined) return '<span class="json-null">null</span>';
+      if (typeof obj === 'string') return escapeHtml(obj);
+
+      const json = JSON.stringify(obj, null, 2);
+      return json.replace(/("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+        function (match) {
+          let cls = 'json-number';
+          if (/^"/.test(match)) {
+            cls = /:$/.test(match) ? 'json-key' : 'json-string';
+          } else if (/true|false/.test(match)) {
+            cls = 'json-bool';
+          } else if (/null/.test(match)) {
+            cls = 'json-null';
+          }
+          return `<span class="${cls}">${match}</span>`;
+        }
+      );
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatTime(ts) {
+      if (!ts) return '—';
+      return ts.replace('T', ' ');
+    }
+
+    function statusClass(s) {
+      if (typeof s !== 'number') return '2xx';
+      return s < 300 ? '2xx' : s < 400 ? '3xx' : s < 500 ? '4xx' : '5xx';
+    }
+
+    function applyFilters() {
+      currentPage = 1;
+      loadTimeline();
+    }
+
+    function debounceFilters() {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(applyFilters, 300);
+    }
+
+    function refreshData() {
+      const btn = document.getElementById('refreshBtn');
+      btn.innerHTML = '<span class="spinner"></span>';
+      setTimeout(() => { btn.innerHTML = '↻ Refresh'; }, 600);
+
+      const hash = location.hash;
+      const diffMatch = hash.match(/^#\/requests\/(\d+)\/diff$/);
+      const detailMatch = hash.match(/^#\/requests\/(\d+)$/);
+
+      if (diffMatch) loadDiff(parseInt(diffMatch[1]));
+      else if (detailMatch) loadDetail(parseInt(detailMatch[1]));
+      else loadTimeline();
+    }
+
+    function showToast(msg, type) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = `toast toast-${type} show`;
+      setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    // ─── Init ──────────────────────────────────────────────────
+    handleHashChange();
+  </script>
+</body>
+</html>

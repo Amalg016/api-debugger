@@ -5,10 +5,7 @@ use actix_web::Error;
 use sqlx::SqlitePool;
 use std::future::{Future, Ready, ready};
 use std::pin::Pin;
-
-// ─────────────────────────────────────────────────────────────────────
-// 1. The Transform — factory that produces the middleware service
-// ─────────────────────────────────────────────────────────────────────
+use tracing::{info, warn};
 
 /// Logging middleware that intercepts every request/response and persists
 /// them to the SQLite database.
@@ -21,9 +18,6 @@ use std::pin::Pin;
 ///   2. Split the `ServiceResponse` into `(HttpRequest, HttpResponse<B>)`.
 ///   3. Further split the `HttpResponse` into `(head, body)`.
 ///   4. Buffer the body bytes, log them, then reattach via `head.set_body()`.
-///
-/// This preserves all response headers and status codes exactly as the
-/// handler set them.
 pub struct RequestLogger;
 
 impl<S, B> Transform<S, ServiceRequest> for RequestLogger
@@ -41,10 +35,6 @@ where
         ready(Ok(RequestLoggerMiddleware { service }))
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// 2. The actual middleware service
-// ─────────────────────────────────────────────────────────────────────
 
 pub struct RequestLoggerMiddleware<S> {
     service: S,
@@ -67,11 +57,24 @@ where
     }
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        // ── Capture request metadata ─────────────────────────────────
         let method = req.method().to_string();
         let path = req.uri().path().to_string();
 
-        // Serialise headers as a JSON object
+        // Skip logging for UI asset requests to keep the DB clean
+        if path.starts_with("/ui") || path == "/" {
+            let fut = self.service.call(req);
+            return Box::pin(async move {
+                let res = fut.await?;
+                let (http_req, http_res) = res.into_parts();
+                let (res_head, res_body) = http_res.into_parts();
+                let body_bytes = actix_web::body::to_bytes(res_body)
+                    .await
+                    .unwrap_or_else(|_| Bytes::new());
+                let rebuilt = res_head.set_body(BoxBody::new(body_bytes));
+                Ok(ServiceResponse::new(http_req, rebuilt).map_into_right_body())
+            });
+        }
+
         let headers: serde_json::Value = req
             .headers()
             .iter()
@@ -85,41 +88,26 @@ where
             .into();
         let headers_str = serde_json::to_string(&headers).unwrap_or_default();
 
-        // Grab the DB pool (shared via app_data)
         let pool = req
             .app_data::<web::Data<SqlitePool>>()
-            .expect("SqlitePool not found in app_data — did you forget .app_data()?")
+            .expect("SqlitePool not found in app_data")
             .clone();
 
-        // ── Forward to the inner service ─────────────────────────────
         let fut = self.service.call(req);
 
         Box::pin(async move {
-            // Request body note: Actix consumes the body stream when the
-            // handler reads it. To capture POST/PUT/PATCH bodies we would
-            // need to buffer the payload *before* calling the handler and
-            // then re-inject it. For now we log `None` for the request
-            // body and capture the full response body below.
             let request_body: Option<String> = None;
-
             let res: ServiceResponse<B> = fut.await?;
 
-            // ── Capture response metadata ────────────────────────────
             let status = res.status().as_u16() as i64;
-
-            // ServiceResponse::into_parts → (HttpRequest, HttpResponse<B>)
             let (http_req, http_res) = res.into_parts();
-
-            // HttpResponse::into_parts → (ResponseHead, Body)
             let (res_head, res_body) = http_res.into_parts();
 
-            // Buffer the body so we can both log and re-send it
             let body_bytes = actix_web::body::to_bytes(res_body)
                 .await
                 .unwrap_or_else(|_| Bytes::new());
             let response_body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
-            // ── Persist to DB (log warning on error) ─────────────────
             let db_result = insert_log(
                 &pool,
                 &method,
@@ -132,22 +120,14 @@ where
             .await;
 
             if let Err(e) = db_result {
-                eprintln!("⚠️  Failed to log request: {e}");
+                warn!(error = %e, "Failed to log request to database");
             }
 
-            // ── Rebuild the response with the buffered body ──────────
-            // `set_body()` reattaches a body to the ResponseHead,
-            // preserving status code and all response headers.
             let rebuilt = res_head.set_body(BoxBody::new(body_bytes));
-
             Ok(ServiceResponse::new(http_req, rebuilt).map_into_right_body())
         })
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// 3. DB helper — insert a request row and a linked response row
-// ─────────────────────────────────────────────────────────────────────
 
 async fn insert_log(
     pool: &SqlitePool,
@@ -178,8 +158,12 @@ async fn insert_log(
     .execute(pool)
     .await?;
 
-    println!(
-        "📝 Logged: {method} {path} → {status} (request_id = {req_id})"
+    info!(
+        method = method,
+        path = path,
+        status = status,
+        request_id = req_id,
+        "Request logged"
     );
     Ok(())
 }

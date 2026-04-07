@@ -1,9 +1,9 @@
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::path::Path;
+use tracing::info;
 
 /// Initialize the SQLite database: create the file if needed, run migrations.
 pub async fn init_db(db_url: &str) -> Result<SqlitePool, sqlx::Error> {
-    // Ensure the database file exists (SQLite needs this with some drivers)
     let path = db_url.strip_prefix("sqlite:").unwrap_or(db_url);
     if !Path::new(path).exists() {
         std::fs::File::create(path).expect("Failed to create database file");
@@ -15,11 +15,9 @@ pub async fn init_db(db_url: &str) -> Result<SqlitePool, sqlx::Error> {
         .await?;
 
     run_migrations(&pool).await?;
-
     Ok(pool)
 }
 
-/// Create the `requests` and `responses` tables if they don't exist.
 async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
@@ -51,33 +49,6 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    println!("✅ Database tables ready.");
-    Ok(())
-}
-
-/// Insert a dummy request + response for testing.
-#[allow(dead_code)]
-pub async fn insert_dummy_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    let req_id = sqlx::query(
-        r#"
-        INSERT INTO requests (method, path, headers, body)
-        VALUES ('GET', '/api/test', '{"Content-Type": "application/json"}', '{"hello": "world"}')
-        "#,
-    )
-    .execute(pool)
-    .await?
-    .last_insert_rowid();
-
-    sqlx::query(
-        r#"
-        INSERT INTO responses (request_id, status, body)
-        VALUES (?, 200, '{"status": "ok"}')
-        "#,
-    )
-    .bind(req_id)
-    .execute(pool)
-    .await?;
-
-    println!("📦 Dummy data inserted (request id = {req_id}).");
+    info!("Database tables ready");
     Ok(())
 }
